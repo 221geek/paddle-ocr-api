@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "paddle-ocr-api"
+version = "0.1.0"
+description = "CPU-first asynchronous OCR service built with FastAPI and PaddleOCR"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn[standard]==0.34.2",
+  "pydantic==2.11.4",
+  "pydantic-settings==2.9.1",
+  "python-multipart==0.0.20",
+  "redis[hiredis]==5.2.1",
+  "prometheus-client==0.21.1",
+  "Pillow==11.2.1",
+  "PyMuPDF==1.25.5",
+  "paddlepaddle==3.0.0",
+  "paddleocr==3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==8.3.5",
+  "pytest-asyncio==0.26.0",
+  "ruff==0.11.9",
+  "mypy==1.15.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ocr_service"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/ocr_service/api/**/*.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+
