@@ -17,6 +17,10 @@ le même jeton que l'API (ou `PROMETHEUS_METRICS_TOKEN`). Le premier démarrage 
 doit utiliser des poids PaddleOCR déjà inclus dans l'image ou montés dans le cache :
 aucun téléchargement de modèle ne doit être autorisé en production.
 
+L'image charge donc PaddleOCR **pendant le build, en root**, car PaddleX écrit aussi une
+police dans son propre répertoire de paquet. Le cache de modèles est ensuite copié vers
+l'utilisateur non-root qui exécute l'API et le worker.
+
 ```bash
 curl -X POST http://localhost:8000/v1/jobs \
   -H "Authorization: Bearer $API_TOKEN" \
