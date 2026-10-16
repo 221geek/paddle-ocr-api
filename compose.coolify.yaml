@@ -1,0 +1,65 @@
+# Déploiement Coolify : aucun port publié sur l'hôte, services aux noms uniques.
+# Les conteneurs rejoignent le réseau partagé « coolify » : des alias génériques (redis, api, worker)
+# y entreraient en collision avec d'autres services (ex. coolify-redis). Clients internes : http://ocr-api:8000
+services:
+  ocr-redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  ocr-api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: redis://ocr-redis:6379/2
+    command: ["uvicorn", "ocr_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    depends_on:
+      ocr-redis:
+        condition: service_healthy
+    expose:
+      - "8000"
+    volumes:
+      - ocr-tmp:/tmp/ocr
+      - object-store:/tmp/ocr-objects:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  ocr-worker:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: redis://ocr-redis:6379/2
+    command: ["python", "-m", "ocr_service.workers.runner"]
+    depends_on:
+      ocr-redis:
+        condition: service_healthy
+    volumes:
+      - ocr-tmp:/tmp/ocr
+      - object-store:/tmp/ocr-objects:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  ocr-tmp:
+  object-store:
