@@ -1,68 +1,68 @@
 # Paddle OCR API
 
-> Microservice OCR asynchrone, CPU-first et auto-hébergeable pour images et PDF scannés.
+> Async, CPU-first, self-hostable OCR microservice for images and scanned PDFs.
 
-Paddle OCR API extrait le texte de pages de journaux, conserve les blocs et leurs coordonnées,
-puis renvoie un JSON stable. Il est prévu pour être appelé par un backend métier — par exemple
-NestJS — qui reste responsable des archives, de la recherche et de l'indexation.
+Paddle OCR API extracts text from newspaper pages, retains blocks and their coordinates, and
+returns stable JSON. It is designed to be called by an application backend — for example,
+NestJS — which remains responsible for archiving, search, and indexing.
 
-Le projet privilégie la maîtrise des ressources : une API FastAPI légère, Redis pour les jobs,
-un worker OCR unique et PaddleOCR chargé une seule fois par processus.
+The project prioritizes controlled resource usage: a lightweight FastAPI API, Redis for jobs,
+a single OCR worker, and PaddleOCR loaded only once per process.
 
-## Fonctionnalités
+## Features
 
-- API REST versionnée sous `/v1` et documentation OpenAPI intégrée.
-- Jobs asynchrones : `queued`, `processing`, `completed`, `failed` et `cancelled`.
-- PNG, JPEG, WebP et PDF scannés multipages, rendus page par page.
-- Texte, blocs OCR, polygones, scores et ordre de lecture estimé.
-- PP-OCRv5 Mobile français sur CPU, chargé une fois par worker.
-- Idempotence Redis atomique, leases de reprise et résultats avec expiration.
-- Limites de taille, pages, pixels, file d'attente et durée de traitement.
-- Authentification Bearer, logs JSON corrélés et métriques Prometheus.
-- Image Docker non-root ; API, worker et Redis séparés.
+- Versioned REST API under `/v1` with built-in OpenAPI documentation.
+- Async jobs: `queued`, `processing`, `completed`, `failed`, and `cancelled`.
+- PNG, JPEG, WebP, and multipage scanned PDFs, rendered one page at a time.
+- Text, OCR blocks, polygons, confidence scores, and estimated reading order.
+- French PP-OCRv5 Mobile on CPU, loaded once per worker.
+- Atomic Redis idempotency, recovery leases, and expiring results.
+- Limits for size, pages, pixels, queue depth, and processing time.
+- Bearer authentication, correlated JSON logs, and Prometheus metrics.
+- Non-root Docker image; separate API, worker, and Redis services.
 
-### Hors périmètre
+### Out of scope
 
-Le projet ne fait ni recherche, ni indexation, ni RAG, ni embeddings, ni persistance métier.
-Il ne corrige pas le texte avec un LLM. L'ordre de lecture est une heuristique géométrique :
-validez-le sur les pages multicolonnes de votre corpus avant tout usage métier critique.
+This project does not provide search, indexing, RAG, embeddings, or business-data persistence.
+It does not correct text with an LLM. Reading order is a geometric heuristic: validate it on
+the multi-column pages in your corpus before relying on it for critical business use.
 
 ## Architecture
 
 ```text
-Client / backend métier
+Client / application backend
         | POST /v1/jobs
         v
-FastAPI ── auth, validation, limites, statut
+FastAPI ── auth, validation, limits, status
         |
         v
-Redis ── jobs, idempotence, leases, résultats TTL
+Redis ── jobs, idempotency, leases, TTL results
         |
         v
-Worker unique ── PaddleOCR chargé une fois
+Single worker ── PaddleOCR loaded once
         |
-        +─ image : rotation EXIF minimale -> OCR
-        +─ PDF   : rendu isolé -> une page -> OCR -> page suivante
+        +─ image: minimal EXIF rotation -> OCR
+        +─ PDF: isolated rendering -> one page -> OCR -> next page
         v
-Résultat JSON versionné
+Versioned JSON result
 ```
 
 ```text
 src/ocr_service/
-├── api/              # Adaptateur HTTP FastAPI
-├── application/      # Cas d'usage et interfaces (ports)
-├── domain/           # Modèles et erreurs sans dépendance de framework
-├── infrastructure/   # Redis, stockage, PDF, image, PaddleOCR, métriques
-├── workers/          # Boucle de travail OCR
-└── core/             # Configuration, logs et sécurité
+├── api/              # FastAPI HTTP adapter
+├── application/      # Use cases and interfaces (ports)
+├── domain/           # Framework-independent models and errors
+├── infrastructure/   # Redis, storage, PDF, image, PaddleOCR, metrics
+├── workers/          # OCR worker loop
+└── core/             # Configuration, logging, and security
 ```
 
-## Prérequis et démarrage
+## Prerequisites and quick start
 
-- Docker Engine et Docker Compose v2 pour l'exécution recommandée.
-- Ou Python 3.11 et [uv](https://docs.astral.sh/uv/) pour contribuer.
-- Redis 7+ accessible par l'API et le worker.
-- Pour commencer : 4 vCPU et 8 Go de RAM pour un worker OCR CPU isolé sont prudents.
+- Docker Engine and Docker Compose v2 for the recommended runtime.
+- Or Python 3.11 and [uv](https://docs.astral.sh/uv/) to contribute.
+- Redis 7+ reachable by the API and worker.
+- As a starting point, 4 vCPUs and 8 GB RAM for one isolated CPU OCR worker is prudent.
 
 ```bash
 git clone https://github.com/221geek/paddle-ocr-api.git
@@ -70,31 +70,31 @@ cd paddle-ocr-api
 cp .env.example .env
 ```
 
-Définissez un secret aléatoire d'au moins 16 caractères dans `.env` :
+Set a random secret of at least 16 characters in `.env`:
 
 ```dotenv
-API_TOKEN=remplacez-moi-par-un-secret-aleatoire-et-suffisamment-long
+API_TOKEN=replace-me-with-a-long-random-secret
 ```
 
-Construisez et démarrez les trois services :
+Build and start the three services:
 
 ```bash
 docker compose up --build
 ```
 
-L'image initialise PaddleOCR pendant le build, en root, car PaddleX écrit une police dans
-son propre répertoire de paquet. Les poids et le cache sont ensuite rendus accessibles à
-`appuser`, l'utilisateur non-root qui exécute l'API et le worker. Le worker ne télécharge
-donc pas de modèle au démarrage.
+The image initializes PaddleOCR as root during the build because PaddleX writes a font to its
+own package directory. Model weights and cache are then made available to `appuser`, the
+non-root user that runs the API and worker. The worker therefore does not download models at
+startup.
 
 ```bash
 curl http://localhost:8000/health/live
 curl http://localhost:8000/health/ready
 ```
 
-`/health/ready` répond `503` tant que Redis ou le worker OCR n'est pas prêt.
+`/health/ready` returns `503` until Redis and the OCR worker are ready.
 
-### Développement sans Docker
+### Development without Docker
 
 ```bash
 uv sync --all-extras
@@ -103,27 +103,27 @@ uv run ruff check .
 uv run mypy src
 ```
 
-Le backend `memory` est prévu pour les tests et l'exploration locale seulement : il ne fournit
-ni durabilité, ni reprise, ni idempotence entre plusieurs processus.
+The `memory` backend is intended for tests and local exploration only: it provides neither
+durability, recovery, nor idempotency across multiple processes.
 
 ```bash
-export API_TOKEN='un-secret-de-developpement-tres-long'
+export API_TOKEN='a-very-long-development-secret'
 export JOB_BACKEND=memory
 uv run uvicorn ocr_service.main:app --reload
 ```
 
-## Référence API
+## API reference
 
-La documentation interactive est disponible sur [http://localhost:8000/docs](http://localhost:8000/docs)
-et le schéma OpenAPI sur [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json).
+Interactive documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs)
+and the OpenAPI schema at [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json).
 
-Tous les endpoints de jobs et de métriques requièrent :
+All job and metrics endpoints require:
 
 ```http
 Authorization: Bearer <API_TOKEN>
 ```
 
-Les erreurs applicatives sont structurées de manière stable :
+Application errors use a stable structure:
 
 ```json
 {
@@ -133,24 +133,24 @@ Les erreurs applicatives sont structurées de manière stable :
 }
 ```
 
-Le `request_id` est aussi renvoyé via l'en-tête `X-Request-ID`. Vous pouvez fournir votre
-propre `X-Request-ID` pour le corréler à votre système appelant.
+The `request_id` is also returned in the `X-Request-ID` header. You can supply your own
+`X-Request-ID` to correlate it with the calling system.
 
-### Créer un job
+### Create a job
 
 ```bash
 curl --request POST http://localhost:8000/v1/jobs \
   --header "Authorization: Bearer <API_TOKEN>" \
-  --header "Idempotency-Key: journal-1978-page-1" \
-  --form archive_id=journal_1978 \
-  --form document_id=journal_1978_0042 \
+  --header "Idempotency-Key: newspaper-1978-page-1" \
+  --form archive_id=newspaper_1978 \
+  --form document_id=newspaper_1978_0042 \
   --form page_number=1 \
   --form language=fr \
   --form include_boxes=true \
   --form file=@page-1.jpg
 ```
 
-Réponse `202 Accepted` :
+`202 Accepted` response:
 
 ```json
 {
@@ -161,45 +161,44 @@ Réponse `202 Accepted` :
 }
 ```
 
-| Champ | Requis | Description |
+| Field | Required | Description |
 | --- | --- | --- |
-| `file` | oui | PNG, JPEG, WebP ou PDF scanné |
-| `archive_id` | oui | Identifiant de l'archive appelante |
-| `document_id` | oui | Identifiant métier du document |
-| `page_number` | image | Numéro de page, à partir de 1 |
-| `page_start`, `page_end` | PDF | Bornes inclusives de pages, à partir de 1 |
-| `language` | non | Actuellement fixé à `fr` |
-| `model_profile` | non | Actuellement fixé à `mobile` |
-| `detect_layout` | non | Réservé aux évolutions de segmentation |
-| `include_boxes` | non | Retourne ou masque les polygones |
+| `file` | yes | PNG, JPEG, WebP, or scanned PDF |
+| `archive_id` | yes | Identifier of the calling archive |
+| `document_id` | yes | Business identifier of the document |
+| `page_number` | image | Page number, starting at 1 |
+| `page_start`, `page_end` | PDF | Inclusive page bounds, starting at 1 |
+| `language` | no | Currently fixed to `fr` |
+| `model_profile` | no | Currently fixed to `mobile` |
+| `detect_layout` | no | Reserved for future segmentation work |
+| `include_boxes` | no | Returns or hides polygons |
 
-Le fichier est vérifié par signature, pas seulement via son extension ou son `Content-Type`.
+Files are verified by signature, not only by extension or `Content-Type`.
 
-### Référence d'objet interne
+### Internal object reference
 
-Pour éviter de faire transiter un grand document par HTTP, vous pouvez transmettre une référence
-JSON vers un stockage interne autorisé :
+To avoid sending a large document over HTTP, you can pass a JSON reference to approved internal
+storage:
 
 ```bash
 curl --request POST http://localhost:8000/v1/jobs \
   --header "Authorization: Bearer <API_TOKEN>" \
   --header "Content-Type: application/json" \
   --data '{
-    "archive_id": "journal_1978",
-    "document_id": "journal_1978_0042",
+    "archive_id": "newspaper_1978",
+    "document_id": "newspaper_1978_0042",
     "page_number": 1,
-    "object_key": "archives/journal_1978/page-1.jpg"
+    "object_key": "archives/newspaper_1978/page-1.jpg"
   }'
 ```
 
-Les URL arbitraires sont volontairement refusées pour prévenir les SSRF. L'adaptateur fourni
-résout uniquement des clés sous `OCR_OBJECT_STORE_DIR`, préfixées par
-`OCR_ALLOWED_OBJECT_PREFIX`. Pour S3 ou un autre stockage, implémentez le port
-`application/ports/blob_store.py`.
+Arbitrary URLs are intentionally refused to prevent SSRF. The supplied adapter resolves only
+keys under `OCR_OBJECT_STORE_DIR`, prefixed by `OCR_ALLOWED_OBJECT_PREFIX`. For S3 or
+another storage service, implement the `application/ports/blob_store.py` port.
 
-### Consulter un job et son résultat
+### Retrieve a job and its result
 
-`GET /v1/jobs/{job_id}` retourne l'état et la progression :
+`GET /v1/jobs/{job_id}` returns its state and progress:
 
 ```json
 {
@@ -215,22 +214,22 @@ résout uniquement des clés sous `OCR_OBJECT_STORE_DIR`, préfixées par
 }
 ```
 
-`GET /v1/jobs/{job_id}/result` répond :
+`GET /v1/jobs/{job_id}/result` returns:
 
-| Réponse | Signification |
+| Response | Meaning |
 | --- | --- |
-| `202` | Le travail n'est pas terminé |
-| `200` | Résultat disponible |
-| `404` | Job inconnu |
-| `410` | Job terminé mais résultat expiré |
+| `202` | Processing is not complete |
+| `200` | Result available |
+| `404` | Unknown job |
+| `410` | Job completed but result expired |
 
-Extrait de résultat :
+Example result:
 
 ```json
 {
   "schema_version": "1.0",
   "job_id": "ocr_7b4e7b9f7ec44d3a8ed08d8e6bb51ef3",
-  "document_id": "journal_1978_0042",
+  "document_id": "newspaper_1978_0042",
   "engine": {
     "name": "paddleocr",
     "model": "PP-OCRv5_mobile",
@@ -240,10 +239,10 @@ Extrait de résultat :
     "page_number": 1,
     "width": 2480,
     "height": 3508,
-    "text": "Texte normalisé de la page…",
+    "text": "Normalized page text…",
     "blocks": [{
       "id": "b1",
-      "text": "Titre du journal",
+      "text": "Newspaper headline",
       "confidence": 0.98,
       "polygon": [[120,80],[1100,80],[1100,210],[120,210]],
       "reading_order": 0
@@ -254,119 +253,118 @@ Extrait de résultat :
 }
 ```
 
-Les coordonnées sont exprimées dans le repère de l'image OCR. Pour un PDF, il s'agit de
-l'image rendue au DPI configuré. Les scores PaddleOCR sont informatifs, pas des probabilités
-calibrées. `DELETE /v1/jobs/{job_id}` annule un job en attente ; une inférence en cours n'est
-pas interrompue afin de ne pas laisser PaddleOCR dans un état incohérent.
+Coordinates are expressed in the OCR image coordinate system. For a PDF, that is the image
+rendered at the configured DPI. PaddleOCR scores are informative, not calibrated probabilities.
+`DELETE /v1/jobs/{job_id}` cancels a queued job; an inference already in progress is not
+interrupted, so PaddleOCR is not left in an inconsistent state.
 
-### Endpoints techniques
+### Operational endpoints
 
-| Endpoint | Authentification | Usage |
+| Endpoint | Authentication | Purpose |
 | --- | --- | --- |
-| `GET /health/live` | non | Le processus HTTP répond |
-| `GET /health/ready` | non | Redis et le worker OCR sont prêts |
-| `GET /metrics` | Bearer | Métriques Prometheus ; réseau privé uniquement |
+| `GET /health/live` | none | The HTTP process responds |
+| `GET /health/ready` | none | Redis and the OCR worker are ready |
+| `GET /metrics` | Bearer | Prometheus metrics; private network only |
 
-## Idempotence, retries et reprise
+## Idempotency, retries, and recovery
 
-La clé de travail combine SHA-256 du contenu, pages demandées, paramètres OCR et version de
-modèle. Si le client envoie `Idempotency-Key`, elle devient la clé de déduplication : utilisez
-donc une clé unique pour chaque requête métier.
+The work key combines the content SHA-256, requested pages, OCR settings, and model version.
+If the client sends `Idempotency-Key`, it becomes the deduplication key: therefore use a
+unique key for every business request.
 
-Redis utilise une opération Lua atomique pour empêcher les soumissions concurrentes de créer
-deux jobs. Le worker conserve un lease lorsqu'il prend un job. Après un redémarrage, les leases
-expirés sont remis en file jusqu'à deux fois ; le troisième échec produit le code stable
-`worker_lease_expired`.
+Redis uses an atomic Lua operation to prevent concurrent submissions from creating two jobs.
+The worker holds a lease while processing a job. After a restart, expired leases are requeued
+up to twice; the third failure produces the stable `worker_lease_expired` code.
 
 ## Configuration
 
-Copiez [`.env.example`](.env.example) vers `.env` en développement. En production, déclarez
-ces valeurs comme secrets ou variables Coolify, sans jamais commiter `.env`.
+Copy [`.env.example`](.env.example) to `.env` in development. In production, declare these
+values as Coolify secrets or variables, and never commit `.env`.
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_ENV` | `development` | Environnement applicatif |
-| `LOG_LEVEL` | `INFO` | Niveau des logs JSON |
-| `API_TOKEN` | — | Secret Bearer, au moins 16 caractères |
-| `REDIS_URL` | `redis://redis:6379/2` | Redis des jobs et résultats |
-| `JOB_BACKEND` | `redis` | `redis` en production ; `memory` pour les tests |
-| `OCR_MODEL_PROFILE` | `mobile` | Profil CPU public ; moteur volontairement fixe |
-| `OCR_MAX_CONCURRENT_JOBS` | `1` | Un worker traite séquentiellement |
-| `OCR_MAX_UPLOAD_MB` | `50` | Taille maximale d'un upload |
-| `OCR_MAX_PAGES_PER_JOB` | `30` | Pages maximales par PDF/plage |
-| `OCR_RENDER_DPI` | `250` | DPI PDF, entre 72 et 400 |
-| `OCR_MAX_IMAGE_PIXELS` | `30000000` | Protection contre les images décompressées |
-| `OCR_JOB_TIMEOUT_SECONDS` | `600` | Délai maximal d'un job |
-| `OCR_RESULT_TTL_HOURS` | `72` | Conservation temporaire des résultats |
-| `OCR_TEMP_DIR` | `/tmp/ocr` | Répertoire temporaire partagé |
-| `OCR_MAX_QUEUED_JOBS` | `100` | Capacité de file avant un `429` |
-| `OCR_ALLOWED_OBJECT_PREFIX` | `archives/` | Préfixe autorisé des références objet |
-| `OCR_OBJECT_STORE_DIR` | `/tmp/ocr-objects` | Racine de l'adaptateur objet local |
-| `PADDLE_NUM_THREADS` | `2` | Threads OpenMP/MKL de Paddle |
+| `APP_ENV` | `development` | Application environment |
+| `LOG_LEVEL` | `INFO` | JSON log level |
+| `API_TOKEN` | — | Bearer secret, at least 16 characters |
+| `REDIS_URL` | `redis://redis:6379/2` | Redis for jobs and results |
+| `JOB_BACKEND` | `redis` | `redis` in production; `memory` for tests |
+| `OCR_MODEL_PROFILE` | `mobile` | Public CPU profile; engine intentionally fixed |
+| `OCR_MAX_CONCURRENT_JOBS` | `1` | A worker processes sequentially |
+| `OCR_MAX_UPLOAD_MB` | `50` | Maximum upload size |
+| `OCR_MAX_PAGES_PER_JOB` | `30` | Maximum pages per PDF/range |
+| `OCR_RENDER_DPI` | `250` | PDF DPI, between 72 and 400 |
+| `OCR_MAX_IMAGE_PIXELS` | `30000000` | Protection from decompressed images |
+| `OCR_JOB_TIMEOUT_SECONDS` | `600` | Maximum job duration |
+| `OCR_RESULT_TTL_HOURS` | `72` | Temporary result retention |
+| `OCR_TEMP_DIR` | `/tmp/ocr` | Shared temporary directory |
+| `OCR_MAX_QUEUED_JOBS` | `100` | Queue capacity before a `429` |
+| `OCR_ALLOWED_OBJECT_PREFIX` | `archives/` | Allowed object-reference prefix |
+| `OCR_OBJECT_STORE_DIR` | `/tmp/ocr-objects` | Root of the local object adapter |
+| `PADDLE_NUM_THREADS` | `2` | Paddle OpenMP/MKL threads |
 
-## Déploiement Coolify
+## Coolify deployment
 
-[`compose.yaml`](compose.yaml) définit trois services :
+[`compose.yaml`](compose.yaml) defines three services:
 
-1. **api** : FastAPI/Uvicorn ; n'initialise pas PaddleOCR.
-2. **worker** : initialise PaddleOCR une fois et traite les jobs un par un.
-3. **redis** : file, états, leases et résultats temporaires.
+1. **api**: FastAPI/Uvicorn; does not initialize PaddleOCR.
+2. **worker**: initializes PaddleOCR once and processes jobs one at a time.
+3. **redis**: queue, states, leases, and temporary results.
 
-Procédure recommandée :
+Recommended procedure:
 
-1. Connectez le dépôt GitHub et déployez la branche `main` avec Docker Compose.
-2. Définissez au minimum `API_TOKEN`, `REDIS_URL`, `APP_ENV=production` et `JOB_BACKEND=redis`.
-3. Placez Redis, API et worker sur un réseau interne.
-4. N'exposez pas Redis ni `/metrics`. Si NestJS est le seul appelant, ne rendez pas l'API publique.
-5. Commencez avec un worker et fixez des limites CPU/RAM cohérentes avec votre VPS.
-6. Utilisez `/health/live` pour le processus et `/health/ready` pour la disponibilité applicative.
+1. Connect the GitHub repository and deploy the `main` branch with Docker Compose.
+2. Set at least `API_TOKEN`, `REDIS_URL`, `APP_ENV=production`, and `JOB_BACKEND=redis`.
+3. Put Redis, the API, and the worker on an internal network.
+4. Do not expose Redis or `/metrics`. If NestJS is the only caller, do not make the API public.
+5. Start with one worker and set CPU/RAM limits consistent with your VPS.
+6. Use `/health/live` for the process and `/health/ready` for application readiness.
 
-Le premier build nécessite l'accès sortant aux ressources PaddleOCR afin de précharger les
-poids. Les démarrages ne les téléchargent pas. Si le serveur de build n'a pas d'accès sortant,
-construisez l'image dans une CI autorisée puis poussez-la dans un registre privé.
+The first build requires outbound access to PaddleOCR resources in order to preload weights.
+Startup does not download them. If the build server has no outbound access, build the image in
+an authorized CI environment and push it to a private registry.
 
-## Sécurité et exploitation
+## Security and operations
 
-- Ne stockez jamais `API_TOKEN` dans Git ou les logs.
-- Les fichiers sont limités et inspectés par signature, dimensions et nombre de pages.
-- Les PDF sont rendus page par page dans un processus isolé avec timeout.
-- Les URL clientes sont refusées ; les références objet restent sous une racine contrôlée.
-- Les résultats Redis expirent : archivez-les côté système métier si la conservation doit être durable.
-- Les conteneurs applicatifs tournent sans root et avec système de fichiers applicatif en lecture seule.
-- Les logs ne contiennent ni texte de document ni jeton d'accès.
+- Never store `API_TOKEN` in Git or logs.
+- Files are limited and inspected by signature, dimensions, and page count.
+- PDFs are rendered one page at a time in an isolated process with a timeout.
+- Client URLs are rejected; object references remain under a controlled root.
+- Redis results expire: archive them in the application system if retention must be durable.
+- Application containers run as non-root with a read-only application filesystem.
+- Logs contain neither document text nor access tokens.
 
-| HTTP | Code | Situation |
+| HTTP | Code | Context |
 | --- | --- | --- |
-| `401` | `unauthorized` | Jeton absent ou incorrect |
-| `413` | `payload_too_large` | Upload trop gros |
-| `415` | `unsupported_media_type` | Fichier non pris en charge |
-| `422` | `validation_error` / `invalid_input` | Paramètres ou document invalides |
-| `429` | `queue_saturated` | File OCR pleine |
-| `503` | `ocr_not_ready` / `service_unavailable` | Dépendance ou worker indisponible |
+| `401` | `unauthorized` | Missing or invalid token |
+| `413` | `payload_too_large` | Upload too large |
+| `415` | `unsupported_media_type` | Unsupported file |
+| `422` | `validation_error` / `invalid_input` | Invalid parameters or document |
+| `429` | `queue_saturated` | OCR queue full |
+| `503` | `ocr_not_ready` / `service_unavailable` | Dependency or worker unavailable |
 
-## Qualité OCR et benchmarks
+## OCR quality and benchmarks
 
-Évaluez le service sur vos propres journaux : petits caractères, colonnes, titres, publicités,
-pages inclinées, fonds jaunis et photos. Conservez des transcriptions manuelles et mesurez :
+Evaluate the service on your own newspapers: small text, columns, headlines, ads, skewed pages,
+yellowed backgrounds, and photos. Keep manual transcriptions and measure:
 
 - **CER** — Character Error Rate.
 - **WER** — Word Error Rate.
-- Rappel des noms propres, dates et mots-clés critiques.
-- Ordre de lecture multicolonne.
-- p50/p95, pages/minute et RSS pour 20, 100 puis 1 000 pages.
+- Recall of proper nouns, dates, and critical keywords.
+- Multi-column reading order.
+- p50/p95, pages per minute, and RSS for 20, 100, then 1,000 pages.
 
-Le script suivant charge le moteur une fois et produit un rapport JSON :
+The following script loads the engine once and produces a JSON report:
 
 ```bash
-python scripts/benchmark.py /chemin/vers/corpus --output benchmark-report.json
+python scripts/benchmark.py /path/to/corpus --output benchmark-report.json
 ```
 
-Le rapport contient `pages`, `p50_ms`, `p95_ms`, `pages_per_minute` et `max_rss_kb`.
-Conservez-le avec les mesures CER/WER ; ne communiquez pas un débit comme une garantie universelle.
+The report contains `pages`, `p50_ms`, `p95_ms`, `pages_per_minute`, and `max_rss_kb`.
+Keep it with the CER/WER measurements; do not present throughput as a universal guarantee.
 
-## Développement et contribution
+## Development and contributing
 
-### Commandes de qualité
+### Quality commands
 
 ```bash
 uv run pytest
@@ -375,36 +373,34 @@ uv run ruff check .
 uv run mypy src
 ```
 
-Les tests couvrent les contrats HTTP, l'authentification, les limites de fichier, l'idempotence
-et le mapping des résultats PaddleOCR. Ajoutez des fixtures représentatives avant une campagne
-d'intégration OCR et de charge.
+Tests cover HTTP contracts, authentication, file limits, idempotency, and PaddleOCR result
+mapping. Add representative fixtures before running OCR integration and load tests.
 
-### Dépendances reproductibles
+### Reproducible dependencies
 
-[`uv.lock`](uv.lock) verrouille la résolution. [`requirements.lock`](requirements.lock) est
-exporté avec les hashes et utilisé par l'image Docker.
+[`uv.lock`](uv.lock) locks dependency resolution. [`requirements.lock`](requirements.lock)
+is exported with hashes and used by the Docker image.
 
 ```bash
 uv lock
 uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file requirements.lock
 ```
 
-Les hooks Ruff sont déclarés dans [`.pre-commit-config.yaml`](.pre-commit-config.yaml).
+Ruff hooks are declared in [`.pre-commit-config.yaml`](.pre-commit-config.yaml).
 
-### Contribuer
+### Contributing
 
-1. Ouvrez une issue décrivant le besoin ou le bug.
-2. Créez une branche ciblée et ajoutez les tests nécessaires.
-3. Exécutez les commandes de qualité.
-4. Ouvrez une pull request concise et documentez tout impact opérationnel.
+1. Open an issue describing the need or bug.
+2. Create a focused branch and add the required tests.
+3. Run the quality commands.
+4. Open a concise pull request and document any operational impact.
 
-Les prochaines améliorations naturelles sont un adaptateur S3 signé, une persistance durable
-des résultats, un corpus d'intégration OCR, une campagne de charge et une segmentation de
-colonnes validée sur des données réelles.
+Natural next improvements are a signed S3 adapter, durable result storage, an OCR integration
+corpus, a load-test campaign, and column segmentation validated on real data.
 
-## Licence
+## License
 
-Ce dépôt ne contient pas encore de licence. Avant toute réutilisation, publication de paquet
-ou contribution externe, le mainteneur doit ajouter une licence explicite — par exemple MIT,
-Apache-2.0 ou GPL-3.0 selon l'intention du projet.
+This repository does not yet include a license. Before reuse, package publication, or external
+contribution, the maintainer must add an explicit license — for example MIT, Apache-2.0, or
+GPL-3.0, depending on the project's intended use.
 
