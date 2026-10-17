@@ -62,3 +62,36 @@ def test_rejects_an_unsupported_upload(client: TestClient, auth_headers: dict[st
     )
     assert response.status_code == 415
     assert response.json()["code"] == "unsupported_media_type"
+
+
+def test_completed_job_result_is_served_after_a_storage_round_trip(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Jobs come back from Redis with plain-string statuses (use_enum_values): compare by value."""
+    import asyncio
+
+    from ocr_service.domain.enums import JobStatus
+    from ocr_service.domain.models import JobRecord, OCRResult, PageResult
+
+    payload = submit(client, auth_headers, key="round-trip").json()
+    repository = client.app.state.container.repository
+
+    async def complete() -> None:
+        job = await repository.get(payload["job_id"])
+        job.status = JobStatus.COMPLETED
+        await repository.update(JobRecord.model_validate_json(job.model_dump_json()))
+        page = PageResult(
+            page_number=1, width=16, height=16, text="LE POLITICIEN", blocks=[], processing_ms=1
+        )
+        result = OCRResult(
+            job_id=job.job_id,
+            document_id=job.input.document_id,
+            engine={"name": "test"},
+            pages=[page],
+        )
+        await repository.save_result(result, ttl_seconds=60)
+
+    asyncio.run(complete())
+    response = client.get(f"{payload['status_url']}/result", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["pages"][0]["text"] == "LE POLITICIEN"

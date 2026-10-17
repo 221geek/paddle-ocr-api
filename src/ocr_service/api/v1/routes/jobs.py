@@ -120,7 +120,7 @@ async def get_result(job_id: str, container: Container = Depends(get_container))
     job = await container.repository.get(job_id)
     if job is None:
         raise JobNotFoundError("Job does not exist")
-    if job.status is not JobStatus.COMPLETED:
+    if job.status != JobStatus.COMPLETED:
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content=PendingResultResponse(job_id=job_id, status=job.status).model_dump(mode="json"),

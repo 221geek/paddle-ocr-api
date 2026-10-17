@@ -84,7 +84,7 @@ class RedisJobRepository(JobRepository):
         job = await self.get(job_id)
         if job is None:
             return None
-        if job.status is not JobStatus.QUEUED:
+        if job.status != JobStatus.QUEUED:
             return job
         job.status = JobStatus.CANCELLED
         job.completed_at = utcnow()
@@ -103,7 +103,7 @@ class RedisJobRepository(JobRepository):
         if job is None:
             await self.acknowledge(job_id)
             return None
-        if job.status is JobStatus.CANCELLED:
+        if job.status == JobStatus.CANCELLED:
             await self.acknowledge(job_id)
             return None
         job.status = JobStatus.PROCESSING
@@ -128,13 +128,13 @@ class RedisJobRepository(JobRepository):
         for raw_id in raw_ids:
             job_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
             job = await self.get(job_id)
-            if job is not None and job.attempts < 3 and job.status is JobStatus.PROCESSING:
+            if job is not None and job.attempts < 3 and job.status == JobStatus.PROCESSING:
                 job.status = JobStatus.QUEUED
                 job.started_at = None
                 await self.update(job)
                 await self.redis.lpush(QUEUE_KEY, job_id)
                 recovered += 1
-            elif job is not None and job.status is JobStatus.PROCESSING:
+            elif job is not None and job.status == JobStatus.PROCESSING:
                 job.status = JobStatus.FAILED
                 job.completed_at = utcnow()
                 job.error_code = "worker_lease_expired"
@@ -190,7 +190,7 @@ class InMemoryJobRepository(JobRepository):
 
     async def cancel_queued(self, job_id: str) -> JobRecord | None:
         job = self.jobs.get(job_id)
-        if job is not None and job.status is JobStatus.QUEUED:
+        if job is not None and job.status == JobStatus.QUEUED:
             job.status = JobStatus.CANCELLED
             job.completed_at = utcnow()
         return job
@@ -199,7 +199,7 @@ class InMemoryJobRepository(JobRepository):
         del timeout_seconds
         while self.queue:
             job = self.jobs[self.queue.popleft()]
-            if job.status is JobStatus.QUEUED:
+            if job.status == JobStatus.QUEUED:
                 job.status = JobStatus.PROCESSING
                 job.started_at = utcnow()
                 job.attempts += 1
